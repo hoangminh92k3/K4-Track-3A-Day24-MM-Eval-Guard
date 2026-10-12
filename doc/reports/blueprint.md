@@ -42,6 +42,11 @@ phương pháp: linear.
 Input-layer budget target: 500ms; kết quả thực tế/budget_ok: 27320.26ms / False.
 Phân tích bottleneck: Tầng Presidio chạy hoàn toàn on-device với regex và local pattern recognizer có P95 chỉ 22.20ms (chiếm chưa đầy 0.1% tổng thời gian, nằm sâu trong target 500ms). Bottleneck tuyệt đối nằm ở NeMo input rail (P95 = 27305.75ms) do độ trễ mạng WAN tới Google API endpoint và cơ chế pacing/retry để tránh rate-limit 5 RPM của gói Free Tier. Để đạt ngân sách <500ms cho production, giải pháp là triển khai mô hình guardrails nhỏ (như Llama-Guard-3-1B hoặc vLLM local instance) trực tiếp tại on-premise inference cluster thay vì gọi Cloud API từ xa.
 
+Kế hoạch đo lường cho các thành phần ngoài phạm vi bắt buộc của Task 12:
+- RAG Pipeline: Thu thập 20 câu hỏi đại diện (10 factual, 5 multi-hop, 5 adversarial), chạy 2 warm-up queries không tính vào mẫu, dùng `time.perf_counter()` đo thời gian từ khi nhận truy vấn đã khử PII qua hybrid search Qdrant + Cohere reranker + LLM generator; ghi nhận timestamps và tính P50/P95 theo phương pháp tuyến tính.
+- NeMo Output Rail: Thu thập 20 câu trả lời sinh bởi RAG (gồm 10 output an toàn và 10 output tiềm ẩn rủi ro rò rỉ dữ liệu), chạy 2 warm-up runs, gọi `check_output_rail` độc lập kèm context để đo độ trễ tự kiểm tra câu trả lời trước khi gửi người dùng.
+- Full Guard / Short-circuit Request: Chạy end-to-end trên toàn bộ 28 inputs (20 attack + 8 clean); với truy vấn dính PII sẽ đo độ trễ dừng sớm ngay tại tầng Presidio (~22ms); với truy vấn an toàn sẽ đo toàn trình Input Guard + RAG + Output Guard để tính P95 toàn hệ thống so với SLA mục tiêu 2000ms.
+
 ## CI gates đề xuất
 
 - RAGAS faithfulness ≥0.75, avg_score ≥0.65 trên 50 câu.
