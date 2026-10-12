@@ -8,7 +8,7 @@ Trưởng nhóm/người nộp: Hoàng Đức Minh - 2A202602362
 
 Ngày lab/deadline áp dụng: 2026-10-12 23:59:00 — Asia/Ho_Chi_Minh (UTC+07:00)
 
-Commit dùng để chấm: 5ba61e283c8652937ef42b477e54e2df106f1e74
+Commit dùng để chấm: 98dbcd80af7008a2106e080577a75b1a31c74aa4
 
 Mỗi nhóm nộp một repo. Điền đủ thành viên và một mục INDIVIDUAL cho từng người.
 Thêm/xóa rows để khớp nhóm thật; mẫu ba rows không ép nhóm phải có ba người.
