@@ -6,8 +6,8 @@ Người phụ trách: Đinh Tiến Mạnh - 2A202602458
 
 Đây là **đề xuất CI/CD**, không phải workflow đã được triển khai/chạy.
 Nguồn kết quả: artifacts/ragas_50q.json, judge_results.json, guard_results.json.
-Run timestamp: 2026-10-12T08:21:31.201463+00:00; guard models: ["gemini-3.1-flash-lite"].
-Models generation/evaluator/judge từ A/B: gemini-3.1-flash-lite (Generation và Judge/Evaluator theo config.py).
+Run timestamp: 2026-10-12T15:21:31.201463+00:00; guard models: ["gemini-3.1-flash-lite"].
+Models generation/evaluator/judge lấy từ artifacts A/B: generation `gpt-4o-mini-2024-07-18` (`answers_50q.json`), evaluator `gpt-4o-mini` và `text-embedding-3-small` (`ragas_50q.json`), judge `gpt-4o-mini` (`judge_results.json`). Phase C guard dùng `gemini-3.1-flash-lite` (`guard_results.json`).
 
 ## Kiến trúc và failure action
 
