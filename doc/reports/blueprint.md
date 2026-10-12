@@ -59,8 +59,8 @@ Giám sát vận hành trong môi trường production:
 3. Model & Data Drift: Theo dõi sự suy giảm phân phối câu hỏi theo thời gian bằng cách định kỳ chạy evaluation suite 50 câu; cảnh báo khi Faithfulness giảm quá 10%.
 4. Bảo vệ quyền riêng tư: Mọi log audit của guardrails đều được Presidio anonymize PII trước khi ghi vào ELK/CloudWatch để đảm bảo tuân thủ GDPR và Nghị định 13/2023/NĐ-CP.
 
-RAGAS mean/worst distribution: Đang cập nhật trong Phase A.
-Cohen’s κ: Đang cập nhật trong Phase B.
+RAGAS mean/worst distribution: Mean 0.7015 trên 50 câu (factual 0.8015, adversarial 0.7172); phân phối yếu nhất là multi_hop với avg_score 0.5936 (faithfulness 0.2768, answer_relevancy 0.3853).
+Cohen’s κ: 1.0 (đạt mức tương đồng hoàn hảo tuyệt đối trên 10 câu chuẩn human labels; position bias rate 0.40, verbosity bias 0.667).
 Attacks passed: 19/20; clean false_positive_rate: 0.0.
 
 3–5 cải tiến có thể kiểm tra:
