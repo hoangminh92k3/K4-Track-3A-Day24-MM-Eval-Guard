@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Module 4: RAGAS Evaluation — 4 metrics + failure analysis."""
 
-import os, sys, json
+import os, sys, json, math
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
@@ -10,7 +10,16 @@ if hasattr(sys.stderr, "reconfigure"):
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import TEST_SET_PATH
+from config import OPENAI_API_KEY, TEST_SET_PATH
+
+
+# Keep evaluator provenance separate from generation and judge configuration.
+# These identifiers are passed to the evaluator clients below and returned in
+# evaluate_ragas() metadata for the Phase A report.
+RAGAS_EVALUATOR_LLM_MODEL = os.getenv("RAGAS_EVALUATOR_LLM_MODEL", "gpt-4o-mini").strip()
+RAGAS_EVALUATOR_EMBEDDING_MODEL = os.getenv(
+    "RAGAS_EVALUATOR_EMBEDDING_MODEL", "text-embedding-3-small"
+).strip()
 
 
 @dataclass
@@ -33,161 +42,153 @@ def load_test_set(path: str = TEST_SET_PATH) -> list[dict]:
 
 def evaluate_ragas(questions: list[str], answers: list[str],
                    contexts: list[list[str]], ground_truths: list[str]) -> dict:
-    """Run RAGAS evaluation."""
-    empty_per_question = [
-        EvalResult(
-            question=q,
-            answer=a,
-            contexts=c if isinstance(c, list) else [str(c)],
-            ground_truth=gt,
-            faithfulness=0.0,
-            answer_relevancy=0.0,
-            context_precision=0.0,
-            context_recall=0.0,
+    """Run all four required RAGAS metrics and return results plus provenance.
+
+    The evaluator clients are configured explicitly so RAGAS defaults cannot
+    silently select unreported models. Failed or non-finite metric results are
+    raised as errors; they are never converted into fabricated zero scores.
+    """
+    input_lengths = {
+        len(questions), len(answers), len(contexts), len(ground_truths),
+    }
+    if len(input_lengths) != 1:
+        raise ValueError(
+            "questions, answers, contexts, and ground_truths must have equal lengths"
         )
-        for q, a, c, gt in zip(questions, answers, contexts, ground_truths)
-    ]
-    if questions == ["q"] and answers == ["a"]:
-        return {
-            "faithfulness": 0.0,
-            "answer_relevancy": 0.0,
-            "context_precision": 0.0,
-            "context_recall": 0.0,
-            "per_question": empty_per_question,
-        }
-    try:
-        from ragas import evaluate
-        from ragas.metrics import faithfulness, answer_relevancy, context_precision, context_recall
-        from datasets import Dataset
-        from config import GOOGLE_API_KEY, OPENAI_API_KEY, is_valid_key
-        import pandas as pd
+    if not questions:
+        raise ValueError("RAGAS evaluation requires at least one question")
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is required for the configured RAGAS evaluators")
+    if not RAGAS_EVALUATOR_LLM_MODEL or not RAGAS_EVALUATOR_EMBEDDING_MODEL:
+        raise ValueError("RAGAS evaluator model identifiers must be non-empty")
 
-        eval_llm = None
-        eval_embeddings = None
+    from datasets import Dataset
+    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+    from ragas import evaluate
+    from ragas.metrics import (
+        AnswerRelevancy,
+        ContextPrecision,
+        ContextRecall,
+        Faithfulness,
+    )
 
-        if is_valid_key(GOOGLE_API_KEY):
-            from langchain_openai import ChatOpenAI
-            from langchain_community.embeddings import HuggingFaceEmbeddings
-            eval_llm = ChatOpenAI(
-                model="gemini-flash-latest",
-                api_key=GOOGLE_API_KEY,
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-                temperature=0,
+    dataset = Dataset.from_dict({
+        "question": questions,
+        "answer": answers,
+        "contexts": contexts,
+        "ground_truth": ground_truths,
+    })
+
+    # Fresh metric instances prevent a prior RAGAS invocation from retaining
+    # an earlier/default evaluator on the module-level metric singletons.
+    metrics = [Faithfulness(), AnswerRelevancy(), ContextPrecision(), ContextRecall()]
+    llm = ChatOpenAI(
+        model_name=RAGAS_EVALUATOR_LLM_MODEL,
+        openai_api_key=OPENAI_API_KEY,
+        temperature=0,
+    )
+    embeddings = OpenAIEmbeddings(
+        model=RAGAS_EVALUATOR_EMBEDDING_MODEL,
+        openai_api_key=OPENAI_API_KEY,
+    )
+
+    result = evaluate(
+        dataset,
+        metrics=metrics,
+        llm=llm,
+        embeddings=embeddings,
+        raise_exceptions=True,
+    )
+    frame = result.to_pandas()
+    if len(frame) != len(questions):
+        raise ValueError(
+            f"RAGAS returned {len(frame)} rows for {len(questions)} input questions"
+        )
+
+    metric_names = (
+        "faithfulness",
+        "answer_relevancy",
+        "context_precision",
+        "context_recall",
+    )
+    missing_metrics = [name for name in metric_names if name not in frame.columns]
+    if missing_metrics:
+        raise ValueError(f"RAGAS result is missing metrics: {missing_metrics}")
+
+    def _metric_score(value, metric_name: str, row_index: int) -> float:
+        try:
+            score = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"RAGAS returned a non-numeric {metric_name} at row {row_index}: {value!r}"
+            ) from exc
+        if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+            raise ValueError(
+                f"RAGAS returned an invalid {metric_name} at row {row_index}: {score!r}"
             )
-            eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        elif is_valid_key(OPENAI_API_KEY):
-            from langchain_openai import ChatOpenAI
-            eval_llm = ChatOpenAI(model="gpt-4o-mini", api_key=OPENAI_API_KEY, temperature=0)
+        return score
 
-        if eval_llm is None:
-            return {
-                "faithfulness": 0.0,
-                "answer_relevancy": 0.0,
-                "context_precision": 0.0,
-                "context_recall": 0.0,
-                "per_question": empty_per_question,
-            }
-
-        dataset = Dataset.from_dict({
-            "question": questions,
-            "answer": answers,
-            "contexts": contexts,
-            "ground_truth": ground_truths,
-        })
-        eval_kwargs = {
-            "dataset": dataset,
-            "metrics": [faithfulness, answer_relevancy, context_precision, context_recall],
-            "llm": eval_llm,
+    per_question = []
+    for row_index, (_, row) in enumerate(frame.iterrows()):
+        scores = {
+            name: _metric_score(row[name], name, row_index)
+            for name in metric_names
         }
-        if eval_embeddings:
-            eval_kwargs["embeddings"] = eval_embeddings
+        per_question.append(EvalResult(
+            question=questions[row_index],
+            answer=answers[row_index],
+            contexts=list(contexts[row_index]),
+            ground_truth=ground_truths[row_index],
+            **scores,
+        ))
 
-        result = evaluate(**eval_kwargs)
-        df = result.to_pandas()
-        per_question = []
-        for _, row in df.iterrows():
-            def _val(val):
-                return 0.0 if pd.isna(val) else float(val)
-
-            per_question.append(
-                EvalResult(
-                    question=str(row["question"]),
-                    answer=str(row["answer"]),
-                    contexts=row["contexts"] if isinstance(row["contexts"], list) else [str(row["contexts"])],
-                    ground_truth=str(row["ground_truth"]),
-                    faithfulness=_val(row.get("faithfulness", 0.0)),
-                    answer_relevancy=_val(row.get("answer_relevancy", 0.0)),
-                    context_precision=_val(row.get("context_precision", 0.0)),
-                    context_recall=_val(row.get("context_recall", 0.0)),
-                )
-            )
-
-        def _safe_agg(k):
-            val = result.get(k)
-            return 0.0 if (val is None or pd.isna(val)) else float(val)
-
-        return {
-            "faithfulness": _safe_agg("faithfulness"),
-            "answer_relevancy": _safe_agg("answer_relevancy"),
-            "context_precision": _safe_agg("context_precision"),
-            "context_recall": _safe_agg("context_recall"),
-            "per_question": per_question,
-        }
-    except Exception as e:
-        print(f"  ⚠️  RAGAS evaluation failed: {e}")
-        return {
-            "faithfulness": 0.0,
-            "answer_relevancy": 0.0,
-            "context_precision": 0.0,
-            "context_recall": 0.0,
-            "per_question": empty_per_question,
-        }
+    evaluator_models = list(dict.fromkeys((
+        llm.model_name,
+        embeddings.model,
+    )))
+    aggregate = {
+        name: sum(getattr(item, name) for item in per_question) / len(per_question)
+        for name in metric_names
+    }
+    aggregate["per_question"] = per_question
+    aggregate["metadata"] = {"evaluator_models": evaluator_models}
+    return aggregate
 
 
 def failure_analysis(eval_results: list[EvalResult], bottom_n: int = 10) -> list[dict]:
     """Analyze bottom-N worst questions using Diagnostic Tree."""
+    diagnostic_tree = {
+        "faithfulness": ("LLM hallucinating", "Tighten prompt, lower temperature, and verify factual grounding."),
+        "context_recall": ("Missing relevant chunks", "Improve chunking or expand retrieval with BM25/dense hybrid search."),
+        "context_precision": ("Too many irrelevant chunks", "Add reranking and metadata filters to reduce noise."),
+        "answer_relevancy": ("Answer doesn't match question", "Improve prompt template and ground the answer in the retrieved context."),
+    }
+
     if not eval_results:
         return []
 
-    diagnostic_tree = {
-        "faithfulness": ("LLM hallucinating", "Tighten prompt, lower temperature"),
-        "context_recall": ("Missing relevant chunks", "Improve chunking or add BM25"),
-        "context_precision": ("Too many irrelevant chunks", "Add reranking or metadata filter"),
-        "answer_relevancy": ("Answer doesn't match question", "Improve prompt template"),
-    }
-
-    candidates = []
-    for r in eval_results:
+    ranked = []
+    for result in eval_results:
         metrics = {
-            "faithfulness": r.faithfulness,
-            "answer_relevancy": r.answer_relevancy,
-            "context_precision": r.context_precision,
-            "context_recall": r.context_recall,
+            "faithfulness": result.faithfulness,
+            "answer_relevancy": result.answer_relevancy,
+            "context_precision": result.context_precision,
+            "context_recall": result.context_recall,
         }
-        avg_score = sum(metrics.values()) / 4.0
-        worst_metric = min(metrics, key=metrics.get)
-        worst_score = metrics[worst_metric]
-        diagnosis, suggested_fix = diagnostic_tree.get(worst_metric, ("Unknown issue", "Review pipeline"))
-        candidates.append({
-            "avg_score": avg_score,
-            "question": r.question,
+        avg_score = sum(metrics.values()) / len(metrics)
+        worst_metric, worst_score = min(metrics.items(), key=lambda item: item[1])
+        diagnosis, suggested_fix = diagnostic_tree.get(worst_metric, ("Unknown issue", "Review retrieval and prompt logic."))
+        ranked.append({
+            "question": result.question,
             "worst_metric": worst_metric,
-            "score": worst_score,
+            "score": round(avg_score, 4),
             "diagnosis": diagnosis,
             "suggested_fix": suggested_fix,
+            "worst_score": round(worst_score, 4),
         })
 
-    candidates.sort(key=lambda x: x["avg_score"])
-    return [
-        {
-            "question": c["question"],
-            "worst_metric": c["worst_metric"],
-            "score": c["score"],
-            "diagnosis": c["diagnosis"],
-            "suggested_fix": c["suggested_fix"],
-        }
-        for c in candidates[:bottom_n]
-    ]
+    ranked.sort(key=lambda item: item["score"])
+    return ranked[:bottom_n]
 
 
 def save_report(results: dict, failures: list[dict], path: str = "reports/ragas_report.json"):
