@@ -2,7 +2,7 @@
 
 Nhóm: MM
 
-Người phụ trách: Hoàng Đức Minh - 2A202602362
+Người phụ trách: Đinh Tiến Mạnh - 2A202602458
 
 Đây là **đề xuất CI/CD**, không phải workflow đã được triển khai/chạy.
 Nguồn kết quả: artifacts/ragas_50q.json, judge_results.json, guard_results.json.
