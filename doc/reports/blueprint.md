@@ -1,6 +1,6 @@
 # Blueprint CI/CD cho RAG và guardrails
 
-Nhóm: Hoàng Đức Minh
+Nhóm: MM
 
 Người phụ trách: Hoàng Đức Minh - 2A202602362
 
